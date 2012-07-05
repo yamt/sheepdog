@@ -198,8 +198,8 @@ retry:
 	return 0;
 }
 
-static struct corosync_event *find_event(enum corosync_event_type type,
-		struct cpg_node *sender)
+static inline struct corosync_event *find_event(enum corosync_event_type type,
+						struct cpg_node *sender)
 {
 	struct corosync_event *cevent;
 
@@ -210,6 +210,35 @@ static struct corosync_event *find_event(enum corosync_event_type type,
 	}
 
 	return NULL;
+}
+
+static inline struct corosync_event *
+lookup_event_reverse(enum corosync_event_type type)
+{
+	struct corosync_event *cevent;
+
+	list_for_each_entry_reverse(cevent, &corosync_event_list, list) {
+		if (cevent->type == type)
+			return cevent;
+	}
+
+	return NULL;
+}
+
+/*
+ * Add confchg to the head of event list
+ *
+ * In order to process it ASAP and we keep relative order of confchg events.
+ */
+static inline void add_confchg_to_list_head(enum corosync_event_type type,
+					    struct corosync_event *cevent)
+{
+	struct corosync_event *entry = lookup_event_reverse(type);
+
+	if (entry)
+		list_add_tail(&cevent->list, &entry->list);
+	else
+		list_add(&cevent->list, &corosync_event_list);
 }
 
 static int is_master(struct cpg_node *node)
@@ -561,7 +590,8 @@ static void cdrv_cpg_confchg(cpg_handle_t handle,
 		cevent->type = COROSYNC_EVENT_TYPE_LEAVE;
 		cevent->sender = left_sheep[i];
 
-		list_add_tail(&cevent->list, &corosync_event_list);
+		/* Leave event would possibly be blocked by cluster request */
+		add_confchg_to_list_head(COROSYNC_EVENT_TYPE_LEAVE, cevent);
 	}
 
 	/* dispatch join_handler */
